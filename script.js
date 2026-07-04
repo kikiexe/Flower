@@ -251,14 +251,18 @@ function updateHeartParticles(elapsed) {
 /* ---------- Tahap 3: Foto Melayang ---------- */
 const textureLoader = new THREE.TextureLoader();
 textureLoader.crossOrigin = "anonymous";
-const photoTexture = textureLoader.load("hot.webp");
-photoTexture.colorSpace = THREE.SRGBColorSpace;
+const photoFiles = ["assets/hot.webp", "assets/hot2.webp", "assets/hot3.webp", "assets/hot4.webp", "assets/hot5.webp"];
+const photoTextures = photoFiles.map((path) => {
+  const tex = textureLoader.load(path);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+});
 
-const photoZs = [-20, -32, -44];
+const photoZs = [-16, -23, -30, -37, -44];
 const photoMeshes = photoZs.map((z, i) => {
   const geo = new THREE.PlaneGeometry(8, 6);
   const mat = new THREE.MeshBasicMaterial({
-    map: photoTexture,
+    map: photoTextures[i],
     transparent: true,
     opacity: 0,
     side: THREE.DoubleSide,
@@ -281,6 +285,22 @@ const pistilGeo = new THREE.SphereGeometry(1, 16, 16);
 const pistilMat = new THREE.MeshStandardMaterial({ color: 0xffd23f, roughness: 0.5 });
 const pistil = new THREE.Mesh(pistilGeo, pistilMat);
 flowerGroup.add(pistil);
+
+// Tangkai: grup TERPISAH dari flowerGroup (biar gak ikut hilang pas kepala
+// bunga di-scale 0 nanti). Mulai scale 0 (baru muncul bareng bunga mekar),
+// soalnya kalau langsung 1 dari awal dia kelihatan dari jauh nembus tahap
+// foto (tangkai bentang di sumbu Y, bukan Z, jadi TETAP kelihatan dari
+// kamera manapun sepanjang sumbu Z, bukan cuma titik).
+const STEM_LENGTH = 16;
+const stemGroup = new THREE.Group();
+stemGroup.position.set(0, 0, FLOWER_Z);
+stemGroup.scale.set(0, 0, 0);
+scene.add(stemGroup);
+const stemGeo = new THREE.CylinderGeometry(0.35, 0.45, STEM_LENGTH, 12);
+const stemMat = new THREE.MeshStandardMaterial({ color: 0x3f7d32, roughness: 0.7 });
+const stem = new THREE.Mesh(stemGeo, stemMat);
+stem.position.set(0, -1 - STEM_LENGTH / 2, 0); // ujung atas nempel pangkal bunga (y=-1)
+stemGroup.add(stem);
 
 const PETAL_COUNT = 8;
 const petalPivots = [];
@@ -305,6 +325,62 @@ for (let i = 0; i < PETAL_COUNT; i++) {
   flowerGroup.add(pivot);
   petalPivots.push(petalMesh);
 }
+
+/* ---------- Tahap 5: Amplop & Kertas QR ---------- */
+// Render QR code asli (bukan pola acak) pakai qrcodejs (CDN), dari elemen
+// tersembunyi lalu diambil canvas-nya jadi tekstur Three.js.
+const qrHolder = document.createElement("div");
+qrHolder.style.position = "absolute";
+qrHolder.style.left = "-9999px";
+document.body.appendChild(qrHolder);
+new QRCode(qrHolder, {
+  text: "https://youtu.be/dQw4w9WgXcQ?si=R67_lNCay5BJ-OOF",
+  width: 256,
+  height: 256,
+  colorDark: "#1a1a1a",
+  colorLight: "#ffffff",
+  correctLevel: QRCode.CorrectLevel.M,
+});
+const qrTexture = new THREE.CanvasTexture(qrHolder.querySelector("canvas"));
+qrTexture.colorSpace = THREE.SRGBColorSpace;
+
+// Amplop muncul di titik yang sama dengan bunga (bergantian, bukan sekaligus)
+const envelopeGroup = new THREE.Group();
+envelopeGroup.position.set(0, 0, FLOWER_Z);
+envelopeGroup.scale.set(0, 0, 0);
+scene.add(envelopeGroup);
+
+const envelopeBody = new THREE.Mesh(
+  new THREE.PlaneGeometry(9, 6),
+  new THREE.MeshStandardMaterial({ color: 0xd8c39a, roughness: 0.85, side: THREE.DoubleSide })
+);
+envelopeGroup.add(envelopeBody);
+
+// Tutup amplop: segitiga menggantung dari tepi atas, pivot di tepi biar bisa dibuka
+const flapGeo = new THREE.BufferGeometry();
+flapGeo.setAttribute(
+  "position",
+  new THREE.BufferAttribute(new Float32Array([-4.5, 0, 0, 4.5, 0, 0, 0, -3, 0]), 3)
+);
+flapGeo.setIndex([0, 1, 2]);
+flapGeo.computeVertexNormals();
+const flapMat = new THREE.MeshStandardMaterial({ color: 0x9c7a4c, roughness: 0.85, side: THREE.DoubleSide });
+const flapPivot = new THREE.Group();
+flapPivot.position.set(0, 3, 0.05); // tepi atas amplop (tinggi 6, jadi tepi di y=+3)
+const flapMesh = new THREE.Mesh(flapGeo, flapMat);
+flapPivot.add(flapMesh);
+envelopeGroup.add(flapPivot);
+
+// Kertas berisi QR, ukurannya dibikin lebih kecil dari badan amplop (5x5 vs
+// 9x6) & diposisikan di tengah biar bener-bener ketutup rapat, gak nongol
+// duluan sebelum dianimasikan keluar. z lebih kecil dari body = ketutup.
+const paperMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(5, 5),
+  new THREE.MeshBasicMaterial({ map: qrTexture, side: THREE.DoubleSide })
+);
+paperMesh.position.set(0, 0, -0.1);
+paperMesh.scale.set(0.85, 0.85, 0.85);
+envelopeGroup.add(paperMesh);
 
 /* ---------- Timeline GSAP terpadu ---------- */
 const tl = gsap.timeline({
@@ -376,13 +452,30 @@ photoMeshes.forEach((mesh, i) => {
   );
 });
 
-// Bunga: kuncup -> mekar (0.8 -> 1.0)
+// Bunga: kuncup -> mekar (0.8 -> 1.0), tangkai ikut muncul bareng
 tl.to(flowerGroup.scale, { x: 1, y: 1, z: 1, duration: 0.2, ease: "back.out(1.7)" }, 0.8);
 tl.to(flowerGroup.rotation, { z: Math.PI * 0.5, y: 0.3, duration: 0.2, ease: "sine.out" }, 0.8);
+tl.to(stemGroup.scale, { x: 1, y: 1, z: 1, duration: 0.2, ease: "back.out(1.7)" }, 0.8);
 petalPivots.forEach((petalMesh, i) => {
   // stagger start (i*0.01) + duration harus tetap <= 1.0 (batas akhir timeline)
   tl.to(petalMesh.rotation, { x: 0.25, duration: 0.12, ease: "sine.out" }, 0.8 + i * 0.01);
 });
+
+// Tahap 5 (1.0 -> 1.47): kamera dari atas turun perlahan menyusuri tangkai
+// (kepala bunga perlahan menghilang di belakang), baru kamera naik balik ke
+// posisi awal, lalu tangkai ikut menghilang TUNTAS sebelum amplop muncul
+// (jeda 1.35->1.5 biar gak numpuk kayak sebelumnya).
+tl.to(camera.position, { y: -13, duration: 0.2, ease: "sine.inOut" }, 1.0);
+tl.to(flowerGroup.scale, { x: 0, y: 0, z: 0, duration: 0.2, ease: "sine.in" }, 1.05);
+tl.to(camera.position, { y: 0, duration: 0.15, ease: "sine.inOut" }, 1.2);
+tl.to(stemGroup.scale, { x: 0, y: 0, z: 0, duration: 0.12, ease: "sine.in" }, 1.35);
+
+// Tahap 6 (1.5 -> 2.0): bergantian muncul amplop, tutupnya kebuka,
+// kertas QR keluar dari dalamnya.
+tl.to(envelopeGroup.scale, { x: 1, y: 1, z: 1, duration: 0.2, ease: "back.out(1.4)" }, 1.5);
+tl.to(flapPivot.rotation, { x: 2.4, duration: 0.15, ease: "sine.inOut" }, 1.7);
+tl.to(paperMesh.position, { y: 3.2, z: 0.6, duration: 0.2, ease: "sine.out" }, 1.8);
+tl.to(paperMesh.scale, { x: 1.15, y: 1.15, z: 1.15, duration: 0.2, ease: "sine.out" }, 1.8);
 
 /* ---------- Render loop ---------- */
 function renderLoop() {
