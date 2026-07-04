@@ -40,7 +40,7 @@ function handleResize() {
   }
 
   camera.updateProjectionMatrix();
-  renderer.setSize(width, height);
+  renderer.setSize(width, height, false);
 
   if (typeof heartMaterial !== "undefined" && heartMaterial) {
     heartMaterial.size = 0.5 * camera.zoom;
