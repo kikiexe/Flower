@@ -14,22 +14,56 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
+let lastWidth = window.innerWidth;
+let lastHeight = window.innerHeight;
+
 function handleResize() {
   const width = window.innerWidth;
   const height = window.innerHeight;
   const aspect = width / height;
 
+  const heightDiff = Math.abs(height - lastHeight);
+  if (width === lastWidth && heightDiff < 120) {
+    return;
+  }
+
+  lastWidth = width;
+  lastHeight = height;
+
   camera.aspect = aspect;
 
   const aspectBaseline = 1.6;
   if (aspect < aspectBaseline) {
-    camera.zoom = Math.max(aspect / aspectBaseline, 0.45);
+    camera.zoom = Math.max(aspect / aspectBaseline, 0.4);
   } else {
     camera.zoom = 1.0;
   }
 
   camera.updateProjectionMatrix();
   renderer.setSize(width, height);
+
+  if (typeof heartMaterial !== "undefined" && heartMaterial) {
+    heartMaterial.size = 0.5 * camera.zoom;
+    heartMaterial.needsUpdate = true;
+  }
+
+  if (typeof photoMeshes !== "undefined" && photoMeshes) {
+    photoMeshes.forEach((pm) => {
+      if (pm.getLoaded()) {
+        updatePhotoScale(pm.mesh, pm.getAspect());
+      }
+    });
+  }
+
+  if (typeof finalGroup !== "undefined" && finalGroup) {
+    const isMobile = aspect < 1.0;
+    if (isMobile) {
+      const finalScale = Math.min(1.3, aspect * 2.6);
+      finalGroup.scale.set(finalScale, finalScale, finalScale);
+    } else {
+      finalGroup.scale.set(1.0, 1.0, 1.0);
+    }
+  }
 }
 
 window.addEventListener("resize", handleResize);
@@ -201,7 +235,7 @@ heartGeometry.setAttribute("position", new THREE.BufferAttribute(basePositions.s
 
 const heartMaterial = new THREE.PointsMaterial({
   color: 0xff2d55,
-  size: 0.5,
+  size: 0.5 * camera.zoom,
   map: createCircleTexture(),
   transparent: true,
   opacity: 1,
@@ -286,6 +320,16 @@ const PHOTO_MAX_DIM = 8;
 
 const photoZs = Array.from({ length: 12 }, (_, i) => -14 - i * ((51 - 14) / 11));
 
+function updatePhotoScale(mesh, imageAspect) {
+  const isMobile = window.innerWidth / window.innerHeight < 1.0;
+  const maxDim = isMobile ? 6.5 : 8.0;
+  if (imageAspect >= 1.0) {
+    mesh.scale.set(maxDim, maxDim / imageAspect, 1);
+  } else {
+    mesh.scale.set(maxDim * imageAspect, maxDim, 1);
+  }
+}
+
 const photoMeshes = photoZs.map((z, i) => {
   const group = new THREE.Group();
   group.position.set(0, 0, z);
@@ -296,16 +340,25 @@ const photoMeshes = photoZs.map((z, i) => {
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
   group.add(mesh);
 
+  let imageAspect = 1.0;
+  let isLoaded = false;
+
   textureLoader.load(photoFiles[i], (tex) => {
     tex.colorSpace = THREE.SRGBColorSpace;
     mat.map = tex;
     mat.needsUpdate = true;
-    const w = tex.image.width, h = tex.image.height;
-    if (w >= h) mesh.scale.set(PHOTO_MAX_DIM, (PHOTO_MAX_DIM * h) / w, 1);
-    else mesh.scale.set((PHOTO_MAX_DIM * w) / h, PHOTO_MAX_DIM, 1);
+    imageAspect = tex.image.width / tex.image.height;
+    isLoaded = true;
+    updatePhotoScale(mesh, imageAspect);
   });
 
-  return { group, material: mat };
+  return {
+    group,
+    mesh,
+    material: mat,
+    getAspect: () => imageAspect,
+    getLoaded: () => isLoaded
+  };
 });
 
 const FLOWER_Z = -95;
@@ -315,19 +368,23 @@ petalGeo.translate(0, 3, 0);
 const pistilGeo = new THREE.SphereGeometry(1, 16, 16);
 const pistilMat = new THREE.MeshStandardMaterial({ color: 0xffd23f, roughness: 0.5 });
 
+const finalGroup = new THREE.Group();
+finalGroup.position.set(0, 0, FLOWER_Z);
+scene.add(finalGroup);
+
 function createFlowerPlant(offsetX, offsetZ, targetScale, petalColor, stemLength) {
   const flowerGroup = new THREE.Group();
-  flowerGroup.position.set(offsetX, 0, FLOWER_Z + offsetZ);
+  flowerGroup.position.set(offsetX, 0, offsetZ);
   flowerGroup.scale.set(0, 0, 0);
-  scene.add(flowerGroup);
+  finalGroup.add(flowerGroup);
 
   const pistil = new THREE.Mesh(pistilGeo, pistilMat);
   flowerGroup.add(pistil);
 
   const stemGroup = new THREE.Group();
-  stemGroup.position.set(offsetX, 0, FLOWER_Z + offsetZ);
+  stemGroup.position.set(offsetX, 0, offsetZ);
   stemGroup.scale.set(0, 0, 0);
-  scene.add(stemGroup);
+  finalGroup.add(stemGroup);
   const stemGeo = new THREE.CylinderGeometry(0.35, 0.45, stemLength, 12);
   const stemMat = new THREE.MeshStandardMaterial({ color: 0x3f7d32, roughness: 0.7 });
   const stem = new THREE.Mesh(stemGeo, stemMat);
@@ -385,9 +442,9 @@ const qrTexture = new THREE.CanvasTexture(qrHolder.querySelector("canvas"));
 qrTexture.colorSpace = THREE.SRGBColorSpace;
 
 const envelopeGroup = new THREE.Group();
-envelopeGroup.position.set(0, 0, FLOWER_Z);
+envelopeGroup.position.set(0, 0, 0);
 envelopeGroup.scale.set(0, 0, 0);
-scene.add(envelopeGroup);
+finalGroup.add(envelopeGroup);
 
 const envelopeBody = new THREE.Mesh(
   new THREE.PlaneGeometry(9, 6),
@@ -426,6 +483,7 @@ const tl = gsap.timeline({
   },
 });
 
+tl.to("#scroll-indicator", { opacity: 0, pointerEvents: "none", duration: 0.15 }, 0);
 tl.to(camera.position, { z: -10, duration: 0.3, ease: "none" }, 0);
 tl.to(camera.position, { z: -55, duration: 1.0, ease: "none" }, 0.3);
 tl.to(camera.position, { z: -78, duration: 0.2, ease: "none" }, 1.3);
