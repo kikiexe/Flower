@@ -14,8 +14,8 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-let lastWidth = window.innerWidth;
-let lastHeight = window.innerHeight;
+let lastWidth = 0;
+let lastHeight = 0;
 
 function handleResize() {
   const width = window.innerWidth;
@@ -66,8 +66,7 @@ function handleResize() {
   }
 }
 
-window.addEventListener("resize", handleResize);
-handleResize();
+
 
 const ambient = new THREE.AmbientLight(0xffffff, 0.6);
 const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
@@ -573,4 +572,8 @@ function renderLoop() {
   updateHeartParticles(elapsed);
   renderer.render(scene, camera);
 }
+
+window.addEventListener("resize", handleResize);
+handleResize();
+
 gsap.ticker.add(renderLoop);
