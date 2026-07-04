@@ -136,6 +136,11 @@ const basePositions = new Float32Array(HEART_COUNT * 3);
 const scatterPositions = new Float32Array(HEART_COUNT * 3);
 const ingressPositions = new Float32Array(HEART_COUNT * 3);
 const phases = new Float32Array(HEART_COUNT);
+// Displacement kursor per-partikel, disimpan & di-lerp tiap frame (bukan
+// dihitung ulang dari nol) biar dorongannya punya inersia, nempel & lepas
+// pelan-pelan — bukan snap instan pas kursor masuk/keluar jangkauan.
+const cursorDispX = new Float32Array(HEART_COUNT);
+const cursorDispY = new Float32Array(HEART_COUNT);
 
 for (let i = 0; i < HEART_COUNT; i++) {
   const p = randomPointInHeart();
@@ -227,19 +232,25 @@ function updateHeartParticles(elapsed) {
     y += Math.cos(elapsed * 1.3 + phase) * 0.45 + Math.sin(elapsed * 0.5 + phase * 2.0) * 0.25;
     z += Math.sin(elapsed * 0.9 + phase * 1.5) * 0.35;
 
-    // Efek tolakan kursor (repulsion) saat partikel sudah berkumpul dan belum memencar penuh
+    // Efek tolakan kursor: falloff gaussian (halus, tanpa batas tegas —
+    // beda dari cutoff keras sebelumnya yang bikin kelihatan "tembok"
+    // lingkaran), dan hasilnya di-lerp ke buffer displacement persisten
+    // biar ada inersia (nempel & lepas pelan-pelan, bukan snap instan).
+    let targetDispX = 0;
+    let targetDispY = 0;
     if (hasMouse && introVal > 0.95 && d < 0.95) {
       const dx = mouse3D.x - x;
       const dy = mouse3D.y - y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      const maxDist = 3.8; // Radius jangkauan tolakan kursor diperkecil agar lebih terfokus
-
-      if (dist < maxDist) {
-        const force = Math.pow(1.0 - dist / maxDist, 1.4);
-        x -= dx * force * 0.85; // Mendorong partikel menjauhi kursor (repulsion)
-        y -= dy * force * 0.85;
-      }
+      const distSq = dx * dx + dy * dy;
+      const sigma = 2.2; // "radius efektif" gaussian, gak ada batas keras
+      const falloff = Math.exp(-distSq / (2 * sigma * sigma));
+      targetDispX = -dx * falloff * 1.1;
+      targetDispY = -dy * falloff * 1.1;
     }
+    cursorDispX[i] += (targetDispX - cursorDispX[i]) * 0.1;
+    cursorDispY[i] += (targetDispY - cursorDispY[i]) * 0.1;
+    x += cursorDispX[i];
+    y += cursorDispY[i];
 
     arr[ix] = x;
     arr[ix + 1] = y;
@@ -274,57 +285,74 @@ const photoMeshes = photoZs.map((z, i) => {
   return mesh;
 });
 
-/* ---------- Tahap 4: Bunga Mekar Prosedural ---------- */
+/* ---------- Tahap 4: Buket Bunga Mekar Prosedural (banyak bunga) ---------- */
 const FLOWER_Z = -95;
-const flowerGroup = new THREE.Group();
-flowerGroup.position.set(0, 0, FLOWER_Z);
-flowerGroup.scale.set(0, 0, 0);
-scene.add(flowerGroup);
-
-const pistilGeo = new THREE.SphereGeometry(1, 16, 16);
-const pistilMat = new THREE.MeshStandardMaterial({ color: 0xffd23f, roughness: 0.5 });
-const pistil = new THREE.Mesh(pistilGeo, pistilMat);
-flowerGroup.add(pistil);
-
-// Tangkai: grup TERPISAH dari flowerGroup (biar gak ikut hilang pas kepala
-// bunga di-scale 0 nanti). Mulai scale 0 (baru muncul bareng bunga mekar),
-// soalnya kalau langsung 1 dari awal dia kelihatan dari jauh nembus tahap
-// foto (tangkai bentang di sumbu Y, bukan Z, jadi TETAP kelihatan dari
-// kamera manapun sepanjang sumbu Z, bukan cuma titik).
-const STEM_LENGTH = 16;
-const stemGroup = new THREE.Group();
-stemGroup.position.set(0, 0, FLOWER_Z);
-stemGroup.scale.set(0, 0, 0);
-scene.add(stemGroup);
-const stemGeo = new THREE.CylinderGeometry(0.35, 0.45, STEM_LENGTH, 12);
-const stemMat = new THREE.MeshStandardMaterial({ color: 0x3f7d32, roughness: 0.7 });
-const stem = new THREE.Mesh(stemGeo, stemMat);
-stem.position.set(0, -1 - STEM_LENGTH / 2, 0); // ujung atas nempel pangkal bunga (y=-1)
-stemGroup.add(stem);
-
 const PETAL_COUNT = 8;
-const petalPivots = [];
 const petalGeo = new THREE.PlaneGeometry(3, 6, 1, 4);
 petalGeo.translate(0, 3, 0); // pivot di pangkal kelopak
-const petalMat = new THREE.MeshStandardMaterial({
-  color: 0xff6fa5,
-  side: THREE.DoubleSide,
-  roughness: 0.6,
-});
+const pistilGeo = new THREE.SphereGeometry(1, 16, 16);
+const pistilMat = new THREE.MeshStandardMaterial({ color: 0xffd23f, roughness: 0.5 });
 
-for (let i = 0; i < PETAL_COUNT; i++) {
-  const angle = (i / PETAL_COUNT) * Math.PI * 2;
-  const pivot = new THREE.Group();
-  pivot.rotation.z = angle; // sebar melingkar menghadap kamera (sumbu pandang Z)
+// Satu bunga = flowerGroup (kepala: putik + kelopak) + stemGroup TERPISAH
+// (biar gak ikut hilang pas kepala bunga di-scale 0 nanti). Mulai scale 0
+// (baru muncul bareng bunga mekar), soalnya kalau langsung 1 dari awal dia
+// kelihatan dari jauh nembus tahap foto (tangkai bentang di sumbu Y, bukan
+// Z, jadi TETAP kelihatan dari kamera manapun sepanjang sumbu Z).
+function createFlowerPlant(offsetX, offsetZ, targetScale, petalColor, stemLength) {
+  const flowerGroup = new THREE.Group();
+  flowerGroup.position.set(offsetX, 0, FLOWER_Z + offsetZ);
+  flowerGroup.scale.set(0, 0, 0);
+  scene.add(flowerGroup);
 
-  const petalMesh = new THREE.Mesh(petalGeo, petalMat.clone());
-  petalMesh.position.set(0, 0.3, 0);
-  petalMesh.rotation.x = -1.45; // kuncup: menutup rapat ke sumbu pusat
-  pivot.add(petalMesh);
+  const pistil = new THREE.Mesh(pistilGeo, pistilMat);
+  flowerGroup.add(pistil);
 
-  flowerGroup.add(pivot);
-  petalPivots.push(petalMesh);
+  const stemGroup = new THREE.Group();
+  stemGroup.position.set(offsetX, 0, FLOWER_Z + offsetZ);
+  stemGroup.scale.set(0, 0, 0);
+  scene.add(stemGroup);
+  const stemGeo = new THREE.CylinderGeometry(0.35, 0.45, stemLength, 12);
+  const stemMat = new THREE.MeshStandardMaterial({ color: 0x3f7d32, roughness: 0.7 });
+  const stem = new THREE.Mesh(stemGeo, stemMat);
+  stem.position.set(0, -1 - stemLength / 2, 0); // ujung atas nempel pangkal bunga (y=-1)
+  stemGroup.add(stem);
+
+  const petalMat = new THREE.MeshStandardMaterial({
+    color: petalColor,
+    side: THREE.DoubleSide,
+    roughness: 0.6,
+  });
+
+  const petalPivots = [];
+  for (let i = 0; i < PETAL_COUNT; i++) {
+    const angle = (i / PETAL_COUNT) * Math.PI * 2;
+    const pivot = new THREE.Group();
+    pivot.rotation.z = angle; // sebar melingkar menghadap kamera (sumbu pandang Z)
+
+    const petalMesh = new THREE.Mesh(petalGeo, petalMat.clone());
+    petalMesh.position.set(0, 0.3, 0);
+    petalMesh.rotation.x = -1.45; // kuncup: menutup rapat ke sumbu pusat
+    pivot.add(petalMesh);
+
+    flowerGroup.add(pivot);
+    petalPivots.push(petalMesh);
+  }
+
+  return { flowerGroup, stemGroup, petalPivots, targetScale };
 }
+
+// Buket: 1 bunga utama di tengah + 4 bunga lebih kecil menyebar di
+// sekelilingnya, variasi warna & tinggi tangkai biar keliatan alami.
+const bouquetConfigs = [
+  { x: 0, z: 0, scale: 1.0, color: 0xff6fa5, stemLen: 16 },
+  { x: -6, z: 1.5, scale: 0.8, color: 0xff8fc0, stemLen: 12 },
+  { x: 6, z: 1.5, scale: 0.8, color: 0xe85f95, stemLen: 12 },
+  { x: -3.5, z: -2.5, scale: 0.65, color: 0xffa8d0, stemLen: 9 },
+  { x: 3.5, z: -2.5, scale: 0.65, color: 0xd94f85, stemLen: 9 },
+];
+const flowerPlants = bouquetConfigs.map((c) =>
+  createFlowerPlant(c.x, c.z, c.scale, c.color, c.stemLen)
+);
 
 /* ---------- Tahap 5: Amplop & Kertas QR ---------- */
 // Render QR code asli (bukan pola acak) pakai qrcodejs (CDN), dari elemen
@@ -452,30 +480,51 @@ photoMeshes.forEach((mesh, i) => {
   );
 });
 
-// Bunga: kuncup -> mekar (0.8 -> 1.0), tangkai ikut muncul bareng
-tl.to(flowerGroup.scale, { x: 1, y: 1, z: 1, duration: 0.2, ease: "back.out(1.7)" }, 0.8);
-tl.to(flowerGroup.rotation, { z: Math.PI * 0.5, y: 0.3, duration: 0.2, ease: "sine.out" }, 0.8);
-tl.to(stemGroup.scale, { x: 1, y: 1, z: 1, duration: 0.2, ease: "back.out(1.7)" }, 0.8);
-petalPivots.forEach((petalMesh, i) => {
-  // stagger start (i*0.01) + duration harus tetap <= 1.0 (batas akhir timeline)
-  tl.to(petalMesh.rotation, { x: 0.25, duration: 0.12, ease: "sine.out" }, 0.8 + i * 0.01);
+// Buket bunga: kuncup -> mekar (0.8 -> 1.0) buat SEMUA bunga, tangkai ikut
+// muncul bareng. Tiap bunga dikasih stagger start dikit (j*0.015) biar
+// mekarnya gak persis bersamaan, keliatan lebih alami/organik.
+flowerPlants.forEach(({ flowerGroup, stemGroup, petalPivots, targetScale }, j) => {
+  const start = 0.8 + j * 0.015;
+  tl.to(
+    flowerGroup.scale,
+    { x: targetScale, y: targetScale, z: targetScale, duration: 0.2, ease: "back.out(1.7)" },
+    start
+  );
+  tl.to(flowerGroup.rotation, { z: Math.PI * 0.5, y: 0.3, duration: 0.2, ease: "sine.out" }, start);
+  tl.to(
+    stemGroup.scale,
+    { x: targetScale, y: targetScale, z: targetScale, duration: 0.2, ease: "back.out(1.7)" },
+    start
+  );
+  petalPivots.forEach((petalMesh, i) => {
+    tl.to(petalMesh.rotation, { x: 0.25, duration: 0.12, ease: "sine.out" }, start + i * 0.01);
+  });
 });
 
-// Tahap 5 (1.0 -> 1.47): kamera dari atas turun perlahan menyusuri tangkai
-// (kepala bunga perlahan menghilang di belakang), baru kamera naik balik ke
-// posisi awal, lalu tangkai ikut menghilang TUNTAS sebelum amplop muncul
-// (jeda 1.35->1.5 biar gak numpuk kayak sebelumnya).
-tl.to(camera.position, { y: -13, duration: 0.2, ease: "sine.inOut" }, 1.0);
-tl.to(flowerGroup.scale, { x: 0, y: 0, z: 0, duration: 0.2, ease: "sine.in" }, 1.05);
-tl.to(camera.position, { y: 0, duration: 0.15, ease: "sine.inOut" }, 1.2);
-tl.to(stemGroup.scale, { x: 0, y: 0, z: 0, duration: 0.12, ease: "sine.in" }, 1.35);
+// Tahap 5 (1.0 -> 1.3): kamera menjauh + turun dikit, nampilin FULL bunga
+// yang lagi mekar sekaligus tangkainya utuh dalam satu frame (bukan cuma
+// tangkai doang). Ditahan sebentar (1.2->1.3) biar sempat keliatan jelas.
+tl.to(camera.position, { y: -6, z: -68, duration: 0.2, ease: "sine.inOut" }, 1.0);
 
-// Tahap 6 (1.5 -> 2.0): bergantian muncul amplop, tutupnya kebuka,
-// kertas QR keluar dari dalamnya.
-tl.to(envelopeGroup.scale, { x: 1, y: 1, z: 1, duration: 0.2, ease: "back.out(1.4)" }, 1.5);
-tl.to(flapPivot.rotation, { x: 2.4, duration: 0.15, ease: "sine.inOut" }, 1.7);
-tl.to(paperMesh.position, { y: 3.2, z: 0.6, duration: 0.2, ease: "sine.out" }, 1.8);
-tl.to(paperMesh.scale, { x: 1.15, y: 1.15, z: 1.15, duration: 0.2, ease: "sine.out" }, 1.8);
+// Tahap 5b (1.3 -> 1.5): bunga (kepala + tangkai) perlahan bergantian jadi
+// amplop — crossfade bareng, bukan hilang dulu baru amplop nongol nyusul.
+// Kamera bareng-bareng balik ke posisi awal (tengah) buat framing amplop.
+// ease "power2.out" (bukan "sine.in") biar bunga ngecil CEPET di awal —
+// nyamain ritme sama amplop yang munculnya cepet duluan (back.out), jadi
+// gak tumpang tindih lama-lama gede berbarengan.
+flowerPlants.forEach(({ flowerGroup, stemGroup }) => {
+  tl.to(flowerGroup.scale, { x: 0, y: 0, z: 0, duration: 0.2, ease: "power2.out" }, 1.3);
+  tl.to(stemGroup.scale, { x: 0, y: 0, z: 0, duration: 0.2, ease: "power2.out" }, 1.3);
+});
+tl.to(envelopeGroup.scale, { x: 1, y: 1, z: 1, duration: 0.2, ease: "back.out(1.4)" }, 1.3);
+tl.to(camera.position, { y: 0, z: -78, duration: 0.2, ease: "sine.inOut" }, 1.3);
+
+// Tahap 6 (1.5 -> 1.85): tutup amplop kebuka TUNTAS (diputar lebih jauh,
+// hampir rata ke belakang badan amplop — sebelumnya cuma nungging separuh),
+// baru kertas QR keluar dari dalamnya.
+tl.to(flapPivot.rotation, { x: 2.9, duration: 0.15, ease: "sine.inOut" }, 1.5);
+tl.to(paperMesh.position, { y: 3.2, z: 0.6, duration: 0.2, ease: "sine.out" }, 1.6);
+tl.to(paperMesh.scale, { x: 1.15, y: 1.15, z: 1.15, duration: 0.2, ease: "sine.out" }, 1.6);
 
 /* ---------- Render loop ---------- */
 function renderLoop() {
