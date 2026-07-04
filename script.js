@@ -12,14 +12,28 @@ camera.position.set(0, 0, 40);
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-window.addEventListener("resize", () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
+function handleResize() {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  const aspect = width / height;
+
+  camera.aspect = aspect;
+
+  const aspectBaseline = 1.6;
+  if (aspect < aspectBaseline) {
+    camera.zoom = Math.max(aspect / aspectBaseline, 0.45);
+  } else {
+    camera.zoom = 1.0;
+  }
+
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
+  renderer.setSize(width, height);
+}
+
+window.addEventListener("resize", handleResize);
+handleResize();
 
 const ambient = new THREE.AmbientLight(0xffffff, 0.6);
 const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
@@ -34,12 +48,36 @@ const planeZ = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const mouse3D = new THREE.Vector3(-9999, -9999, -9999);
 const targetMouse3D = new THREE.Vector3();
 
+function updateMouseCoords(clientX, clientY) {
+  mouse.x = (clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(clientY / window.innerHeight) * 2 + 1;
+}
+
 window.addEventListener("mousemove", (event) => {
-  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  updateMouseCoords(event.clientX, event.clientY);
 });
 
 window.addEventListener("mouseleave", () => {
+  mouse.set(-9999, -9999);
+});
+
+window.addEventListener("touchstart", (event) => {
+  if (event.touches.length > 0) {
+    updateMouseCoords(event.touches[0].clientX, event.touches[0].clientY);
+  }
+}, { passive: true });
+
+window.addEventListener("touchmove", (event) => {
+  if (event.touches.length > 0) {
+    updateMouseCoords(event.touches[0].clientX, event.touches[0].clientY);
+  }
+}, { passive: true });
+
+window.addEventListener("touchend", () => {
+  mouse.set(-9999, -9999);
+});
+
+window.addEventListener("touchcancel", () => {
   mouse.set(-9999, -9999);
 });
 
