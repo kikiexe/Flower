@@ -232,23 +232,31 @@ function updateHeartParticles(elapsed) {
     y += Math.cos(elapsed * 1.3 + phase) * 0.45 + Math.sin(elapsed * 0.5 + phase * 2.0) * 0.25;
     z += Math.sin(elapsed * 0.9 + phase * 1.5) * 0.35;
 
-    // Efek tolakan kursor: falloff gaussian (halus, tanpa batas tegas —
-    // beda dari cutoff keras sebelumnya yang bikin kelihatan "tembok"
-    // lingkaran), dan hasilnya di-lerp ke buffer displacement persisten
-    // biar ada inersia (nempel & lepas pelan-pelan, bukan snap instan).
+    // Efek tolakan kursor: falloff gaussian (area diperkecil dikit), plus
+    // komponen swirl/putaran tipis (bukan murni dorongan radial lurus —
+    // lebih mirip riak air yang punya sedikit pusaran, gak kaku/mekanis).
     let targetDispX = 0;
     let targetDispY = 0;
     if (hasMouse && introVal > 0.95 && d < 0.95) {
       const dx = mouse3D.x - x;
       const dy = mouse3D.y - y;
       const distSq = dx * dx + dy * dy;
-      const sigma = 2.2; // "radius efektif" gaussian, gak ada batas keras
+      const sigma = 1.6; // area efektif diperkecil (sebelumnya 2.2), dorongan lebih terfokus
       const falloff = Math.exp(-distSq / (2 * sigma * sigma));
-      targetDispX = -dx * falloff * 1.1;
-      targetDispY = -dy * falloff * 1.1;
+      const len = Math.sqrt(distSq) || 0.0001;
+      const dirX = dx / len, dirY = dy / len;
+      const pushMag = falloff * 2.0; // dorong menjauh dari kursor
+      const swirlMag = falloff * 0.7; // komponen tegak lurus (putaran halus)
+      targetDispX = -dirX * pushMag - dirY * swirlMag;
+      targetDispY = -dirY * pushMag + dirX * swirlMag;
     }
-    cursorDispX[i] += (targetDispX - cursorDispX[i]) * 0.1;
-    cursorDispY[i] += (targetDispY - cursorDispY[i]) * 0.1;
+    // Lerp asimetris: cepat pas didorong (nempel responsif), lambat pas
+    // dilepas (menetap/settle pelan-pelan) — bukan simetris kayak sebelumnya.
+    const targetMag = Math.hypot(targetDispX, targetDispY);
+    const currentMag = Math.hypot(cursorDispX[i], cursorDispY[i]);
+    const lerpRate = targetMag > currentMag ? 0.16 : 0.05;
+    cursorDispX[i] += (targetDispX - cursorDispX[i]) * lerpRate;
+    cursorDispY[i] += (targetDispY - cursorDispY[i]) * lerpRate;
     x += cursorDispX[i];
     y += cursorDispY[i];
 
