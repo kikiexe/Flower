@@ -183,13 +183,29 @@ function randomPointInHeart() {
 
     let pick = Math.random() * totalLen;
     for (const span of spans) {
-      if (pick <= span.len) return { x: span.x0 + pick, y };
+      if (pick <= span.len) {
+        const x = span.x0 + pick;
+        const half_w = span.len / 2;
+        const x_mid = span.x0 + half_w;
+        const dx = x - x_mid;
+        const r = half_w > 0 ? dx / half_w : 0;
+        const z_limit = 0.55 * half_w * Math.sqrt(Math.max(0, 1 - r * r));
+        const z = (Math.random() - 0.5) * 2 * z_limit;
+        return { x, y, z };
+      }
       pick -= span.len;
     }
     const last = spans[spans.length - 1];
-    return { x: last.x0 + last.len, y };
+    const x = last.x0 + last.len;
+    const half_w = last.len / 2;
+    const x_mid = last.x0 + half_w;
+    const dx = x - x_mid;
+    const r = half_w > 0 ? dx / half_w : 0;
+    const z_limit = 0.55 * half_w * Math.sqrt(Math.max(0, 1 - r * r));
+    const z = (Math.random() - 0.5) * 2 * z_limit;
+    return { x, y, z };
   }
-  return { x: 0, y: minY };
+  return { x: 0, y: minY, z: 0 };
 }
 
 const basePositions = new Float32Array(HEART_COUNT * 3);
@@ -198,17 +214,37 @@ const ingressPositions = new Float32Array(HEART_COUNT * 3);
 const phases = new Float32Array(HEART_COUNT);
 const cursorDispX = new Float32Array(HEART_COUNT);
 const cursorDispY = new Float32Array(HEART_COUNT);
+const cursorDispZ = new Float32Array(HEART_COUNT);
+const colors = new Float32Array(HEART_COUNT * 3);
+
+const colorInner = new THREE.Color(0xff2d55);
+const colorMid = new THREE.Color(0xff6fa5);
+const colorOuter = new THREE.Color(0x8a2be2);
 
 for (let i = 0; i < HEART_COUNT; i++) {
   const p = randomPointInHeart();
   const x = p.x;
   const y = p.y;
-  const z = (Math.random() - 0.5) * 10 * HEART_SCALE;
+  const z = p.z;
 
   const ix = i * 3;
   basePositions[ix] = x;
   basePositions[ix + 1] = y;
   basePositions[ix + 2] = z;
+
+  const distFromCenter = Math.sqrt(x * x + (y - 2.5) * (y - 2.5) + z * z);
+  const maxR = 20.0;
+  const normR = Math.min(1.0, distFromCenter / maxR);
+  const c = new THREE.Color();
+  if (normR < 0.4) {
+    c.copy(colorInner).lerp(colorMid, normR / 0.4);
+  } else {
+    c.copy(colorMid).lerp(colorOuter, (normR - 0.4) / 0.6);
+  }
+
+  colors[ix] = c.r;
+  colors[ix + 1] = c.g;
+  colors[ix + 2] = c.b;
 
   const len = Math.sqrt(x * x + y * y + z * z) || 1;
   const dirX = x / len, dirY = y / len, dirZ = z / len;
@@ -231,9 +267,10 @@ for (let i = 0; i < HEART_COUNT; i++) {
 
 const heartGeometry = new THREE.BufferGeometry();
 heartGeometry.setAttribute("position", new THREE.BufferAttribute(basePositions.slice(), 3));
+heartGeometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
 
 const heartMaterial = new THREE.PointsMaterial({
-  color: 0xff2d55,
+  vertexColors: true,
   size: 0.5 * camera.zoom,
   map: createCircleTexture(),
   transparent: true,
@@ -280,30 +317,39 @@ function updateHeartParticles(elapsed) {
     const phase = phases[i];
     x += Math.sin(elapsed * 1.5 + phase) * 0.45 + Math.cos(elapsed * 0.6 + phase * 2.0) * 0.25;
     y += Math.cos(elapsed * 1.3 + phase) * 0.45 + Math.sin(elapsed * 0.5 + phase * 2.0) * 0.25;
-    z += Math.sin(elapsed * 0.9 + phase * 1.5) * 0.35;
+    z += Math.sin(elapsed * 0.9 + phase * 1.5) * 0.45;
 
     let targetDispX = 0;
     let targetDispY = 0;
+    let targetDispZ = 0;
     if (hasMouse && introVal > 0.95 && d < 0.95) {
       const dx = mouse3D.x - x;
       const dy = mouse3D.y - y;
-      const distSq = dx * dx + dy * dy;
-      const sigma = 1.6;
+      const dz = mouse3D.z - z;
+      const distSq = dx * dx + dy * dy + dz * dz;
+      const sigma = 2.0;
       const falloff = Math.exp(-distSq / (2 * sigma * sigma));
       const len = Math.sqrt(distSq) || 0.0001;
-      const dirX = dx / len, dirY = dy / len;
-      const pushMag = falloff * 2.0;
-      const swirlMag = falloff * 0.7;
+      const dirX = dx / len, dirY = dy / len, dirZ = dz / len;
+      
+      const pushMag = falloff * 2.5;
+      const swirlMag = falloff * 0.8;
+      
       targetDispX = -dirX * pushMag - dirY * swirlMag;
       targetDispY = -dirY * pushMag + dirX * swirlMag;
+      targetDispZ = -dirZ * pushMag;
     }
-    const targetMag = Math.hypot(targetDispX, targetDispY);
-    const currentMag = Math.hypot(cursorDispX[i], cursorDispY[i]);
+    const targetMag = Math.sqrt(targetDispX * targetDispX + targetDispY * targetDispY + targetDispZ * targetDispZ);
+    const currentMag = Math.sqrt(cursorDispX[i] * cursorDispX[i] + cursorDispY[i] * cursorDispY[i] + cursorDispZ[i] * cursorDispZ[i]);
     const lerpRate = targetMag > currentMag ? 0.16 : 0.05;
+    
     cursorDispX[i] += (targetDispX - cursorDispX[i]) * lerpRate;
     cursorDispY[i] += (targetDispY - cursorDispY[i]) * lerpRate;
+    cursorDispZ[i] += (targetDispZ - cursorDispZ[i]) * lerpRate;
+    
     x += cursorDispX[i];
     y += cursorDispY[i];
+    z += cursorDispZ[i];
 
     arr[ix] = x;
     arr[ix + 1] = y;
