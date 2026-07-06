@@ -300,15 +300,37 @@ function updateHeartParticles(elapsed) {
   const introVal = intro.value;
   const hasMouse = mouse3D.x !== -9999;
 
+  const isIntroActive = introVal < 0.999;
+  if (isIntroActive) {
+    heartPoints.rotation.y = (1 - introVal) * 1.8;
+    heartPoints.rotation.z = (1 - introVal) * 0.4;
+  } else {
+    heartPoints.rotation.set(0, 0, 0);
+  }
+
   for (let i = 0; i < HEART_COUNT; i++) {
     const ix = i * 3;
     const bx = basePositions[ix], by = basePositions[ix + 1], bz = basePositions[ix + 2];
     const sx = scatterPositions[ix], sy = scatterPositions[ix + 1], sz = scatterPositions[ix + 2];
     const rx = ingressPositions[ix], ry = ingressPositions[ix + 1], rz = ingressPositions[ix + 2];
 
-    let x = rx + (bx - rx) * introVal;
-    let y = ry + (by - ry) * introVal;
-    let z = rz + (bz - rz) * introVal;
+    const offset = (phases[i] % 1.0) * 0.25;
+    const t = Math.max(0, Math.min(1.0, (introVal - offset) / (1.0 - offset)));
+    const easedT = t * t * (3 - 2 * t);
+
+    let x = rx + (bx - rx) * easedT;
+    let y = ry + (by - ry) * easedT;
+    let z = rz + (bz - rz) * easedT;
+
+    if (isIntroActive) {
+      const angle = (1 - easedT) * (2.5 + (phases[i] % 2.0) * 1.5);
+      const cosA = Math.cos(angle);
+      const sinA = Math.sin(angle);
+      const rxRot = x * cosA - z * sinA;
+      const rzRot = x * sinA + z * cosA;
+      x = rxRot;
+      z = rzRot;
+    }
 
     x = x + (sx - x) * d;
     y = y + (sy - y) * d;
