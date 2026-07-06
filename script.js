@@ -116,14 +116,35 @@ window.addEventListener("touchcancel", () => {
 
 function createCircleTexture() {
   const canvas = document.createElement("canvas");
-  canvas.width = 16;
-  canvas.height = 16;
+  canvas.width = 32;
+  canvas.height = 32;
   const ctx = canvas.getContext("2d");
-  const grad = ctx.createRadialGradient(8, 8, 0, 8, 8, 8);
+
+  // Center radial glow
+  const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 12);
   grad.addColorStop(0, "rgba(255, 255, 255, 1)");
+  grad.addColorStop(0.15, "rgba(255, 255, 255, 0.9)");
+  grad.addColorStop(0.4, "rgba(255, 255, 255, 0.2)");
   grad.addColorStop(1, "rgba(255, 255, 255, 0)");
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 16, 16);
+  ctx.fillRect(0, 0, 32, 32);
+
+  // Horizontal delicate flare line
+  const gradH = ctx.createLinearGradient(0, 16, 32, 16);
+  gradH.addColorStop(0, "rgba(255, 255, 255, 0)");
+  gradH.addColorStop(0.5, "rgba(255, 255, 255, 0.65)");
+  gradH.addColorStop(1, "rgba(255, 255, 255, 0)");
+  ctx.fillStyle = gradH;
+  ctx.fillRect(2, 15, 28, 2);
+
+  // Vertical delicate flare line
+  const gradV = ctx.createLinearGradient(16, 0, 16, 32);
+  gradV.addColorStop(0, "rgba(255, 255, 255, 0)");
+  gradV.addColorStop(0.5, "rgba(255, 255, 255, 0.65)");
+  gradV.addColorStop(1, "rgba(255, 255, 255, 0)");
+  ctx.fillStyle = gradV;
+  ctx.fillRect(15, 2, 2, 28);
+
   return new THREE.CanvasTexture(canvas);
 }
 
